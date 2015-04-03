@@ -142,13 +142,6 @@ class Oracle extends DboSource {
 	var $_results;
  
 /**
- * Last error issued by oci extension
- *
- * @var unknown_type
- */
-	var $_error;
- 
-/**
  * Base configuration settings for MySQL driver
  *
  * @var array
@@ -166,7 +159,7 @@ class Oracle extends DboSource {
 /**
  * Table-sequence map
  *
- * @var unknown_type
+ * @var array
  */
 	var $_sequenceMap = array();
  
@@ -393,10 +386,9 @@ class Oracle extends DboSource {
 			case 'DESCRIBE':
 			case 'SELECT':
 				$this->_scrapeSQL($sql);
-			break;
+				break;
 			default:
 				return $this->_statementId;
-			break;
 		}
  
 		if ($this->_limit >= 1) {
@@ -453,11 +445,16 @@ class Oracle extends DboSource {
  * Checks to see if a named sequence exists
  *
  * @param string $sequence
+ * @param string $owner optional
  * @return bool
  * @access public
  */
-	function sequenceExists($sequence) {
-		$sql = "SELECT SEQUENCE_NAME FROM USER_SEQUENCES WHERE SEQUENCE_NAME = '$sequence'";
+	function sequenceExists($sequence, $owner = '') {
+		if ($owner) {
+			$sql = "SELECT SEQUENCE_NAME FROM ALL_SEQUENCES WHERE SEQUENCE_NAME = '$sequence' AND SEQUENCE_OWNER = '$owner'";
+		} else {
+			$sql = "SELECT SEQUENCE_NAME FROM USER_SEQUENCES WHERE SEQUENCE_NAME = '$sequence'";
+		}
 		if (!$this->execute($sql)) {
 			return false;
 		}
@@ -526,12 +523,22 @@ class Oracle extends DboSource {
 		$tableOnly = $this->fullTableName($model, false, false);
 		$tableSchema = $this->tableSchema($model);
  
+		// TODO: FIXME
+		// DboSource::create() calls $this->lastInsertId($this->fullTableName($Model, false, false), $Model->primaryKey)
+		// This means lastInsertId doesn't know the fully qualified tablename to lookup the sequence, and it depends on
+		// unquilified keys in $this->_sequenceMap, which we are setting here.
+		// So, we key the sequences here on the unqualified table name, which seems bad.
 		if (!empty($model->sequence)) {
-			$this->_sequenceMap[$table] = $model->sequence;
+			$this->_sequenceMap[$tableOnly] = $model->sequence;
 		} elseif (!empty($model->table)) {
-			$this->_sequenceMap[$table] = $model->table . '_seq';
+			if ($this->sequenceExists($model->table . '_seq', $tableSchema)) {
+				$this->_sequenceMap[$tableOnly] = $model->table . '_seq';
+			} else {
+				$this->_sequenceMap[$tableOnly] = false;
+			}
 		}
- 
+
+
 		$cache = parent::describe($model);
  
 		if ($cache != null) {
@@ -555,12 +562,23 @@ class Oracle extends DboSource {
 			);
 		}
 
-		// Find any single-column unique index and mark it as a primary key
+		// Find a single-column unique index and mark it as a primary key
 		$sql = 'SELECT MAX(COLUMN_NAME) COLUMN_NAME, INDEX_NAME, COUNT(*) FROM ALL_IND_COLUMNS JOIN ALL_INDEXES USING (INDEX_NAME) WHERE ALL_INDEXES.UNIQUENESS = \'UNIQUE\' AND ALL_INDEXES.TABLE_NAME =\'';
 		$sql .= strtoupper($tableOnly) . '\''.($tableSchema? ' AND OWNER = \''.strtoupper($tableSchema).'\'' : '').' GROUP BY INDEX_NAME HAVING COUNT(*) = 1';
 		if ($this->execute($sql)) {
+			$candidateKey = '';
 			for ($i = 0; $row = $this->fetchRow(); $i++) {
-				$fields[strtolower($row[0]['COLUMN_NAME'])]['key'] = 'primary';
+				// Prefer the first found
+				if (!$candidateKey) {
+					$candidateKey = strtolower($row[0]['COLUMN_NAME']);
+				}
+				// Prefer a column named "ID"
+				if (strtolower($row[0]['COLUMN_NAME']) == 'id') {
+					break;
+				}
+			}
+			if ($candidateKey) {
+				$fields[$candidateKey]['key'] = 'primary';
 			}
 		}
 
@@ -950,20 +968,23 @@ class Oracle extends DboSource {
 /**
  * Returns the ID generated from the previous INSERT operation.
  *
- * @param string
+ * @param string $source tablename
+ * @param string $key (optional) primary key
  * @return integer
  * @access public
  */
-	function lastInsertId($source) {
+	function lastInsertId($source, $key = '') {
 		$sequence = $this->_sequenceMap[$source];
-		$sql = "SELECT $sequence.currval FROM dual";
+		if ($sequence) {
+			$sql = "SELECT $sequence.currval FROM dual";
  
-		if (!$this->execute($sql)) {
-			return false;
-		}
+			if (!$this->execute($sql)) {
+				return false;
+			}
  
-		while($row = $this->fetchRow()) {
-			return $row[$sequence]['currval'];
+			while($row = $this->fetchRow()) {
+				return $row[$sequence]['currval'];
+			}
 		}
 		return false;
 	}
@@ -1002,22 +1023,18 @@ class Oracle extends DboSource {
 		switch (strtolower($type)) {
 			case 'select':
 				return "SELECT {$fields} FROM {$table} {$alias} {$joins} {$conditions} {$group} {$order} {$limit}";
-			break;
 			case 'create':
 				return "INSERT INTO {$table} ({$fields}) VALUES ({$values})";
-			break;
 			case 'update':
 				if (!empty($alias)) {
 					$aliases = "{$this->alias}{$alias} ";
 				}
 				return "UPDATE {$table} {$aliases}SET {$fields} {$conditions}";
-			break;
 			case 'delete':
 				if (!empty($alias)) {
 					$aliases = "{$this->alias}{$alias} ";
 				}
 				return "DELETE FROM {$table} {$aliases}{$conditions}";
-			break;
 			case 'schema':
 				foreach (array('columns', 'indexes') as $var) {
 					if (is_array(${$var})) {
@@ -1028,7 +1045,6 @@ class Oracle extends DboSource {
 					$columns .= ',';
 				}
 				return "CREATE TABLE {$table} (\n{$columns}{$indexes})";
-			break;
 			case 'alter':
 				break;
 		}
