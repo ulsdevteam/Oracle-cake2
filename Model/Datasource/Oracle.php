@@ -2,7 +2,7 @@
 /**
  * Oracle layer for DBO.
  *
- * PHP versions 4 and 5
+ * PHP version 5
  *
  * CakePHP(tm) : Rapid Development Framework (http://cakephp.org)
  * Copyright 2005-2011, Cake Software Foundation, Inc. (http://cakefoundation.org)
@@ -21,6 +21,8 @@ App::uses('DboSource', 'Model/Datasource');
  
 /**
  * Oracle layer for DBO.
+ * Portions Copyright 2015, University of Pittsburgh
+ * Contributor: Clinton Graham <ctgraham@pitt.edu> +1-412-383-1057
  *
  * This package overrides all PDO methods, using the oci module instead.
  * The Oracle PDO package is experimental and unlikely to be supported by CakePHP in the near future.
@@ -175,9 +177,9 @@ class Oracle extends DboSource {
 		$config['charset'] = !empty($config['charset']) ? $config['charset'] : null;
  
 		if (!$config['persistent']) {
-			$this->connection = @ocilogon($config['login'], $config['password'], $config['database'], $config['charset']);
+			$this->connection = oci_connect($config['login'], $config['password'], $config['database'], $config['charset']);
 		} else {
-			$this->connection = @ociplogon($config['login'], $config['password'], $config['database'], $config['charset']);
+			$this->connection = oci_pconnect($config['login'], $config['password'], $config['database'], $config['charset']);
 		}
  
 		if ($this->connection) {
@@ -200,20 +202,22 @@ class Oracle extends DboSource {
  
 /**
  * Keeps track of the most recent Oracle error
+ * @param resource $source
+ * @param boolean $clear
  *
  */
 	function _setError($source = null, $clear = false) {
 		if ($source) {
-			$e = ocierror($source);
+			$e = oci_error($source);
 		} else {
-			$e = ocierror();
+			$e = oci_error();
 		}
 		$this->_error = $e['message'];
 		if ($clear) {
 			$this->_error = null;
 		}
 	}
- 
+
 /**
  * Sets the encoding language of the session
  *
@@ -252,7 +256,7 @@ class Oracle extends DboSource {
  */
 	function disconnect() {
 		if ($this->connection) {
-			$this->connected = !ocilogoff($this->connection);
+			$this->connected = !oci_close($this->connection);
 			return !$this->connected;
 		}
 	}
@@ -271,6 +275,7 @@ class Oracle extends DboSource {
 		if (!$row = $this->fetchRow()) {
 			return false;
 		}
+		$this->finish();
 		return $row[0]['BANNER'];
 	}
  
@@ -329,7 +334,6 @@ class Oracle extends DboSource {
  *
  * @param integer $limit Maximum number of rows to return
  * @param integer $offset Row to begin returning
- * @return modified SQL Query
  * @access public
  */
 	function limit($limit = -1, $offset = 0) {
@@ -356,7 +360,7 @@ class Oracle extends DboSource {
  * @access protected
  */
 	function _execute($sql) {
-		$this->_statementId = @ociparse($this->connection, $sql);
+		$this->_statementId = oci_parse($this->connection, $sql);
 		if (!$this->_statementId) {
 			$this->_setError($this->connection);
 			return false;
@@ -368,14 +372,14 @@ class Oracle extends DboSource {
 			$mode = OCI_COMMIT_ON_SUCCESS;
 		}
  
-		if (!@ociexecute($this->_statementId, $mode)) {
+		if (!oci_execute($this->_statementId, $mode)) {
 			$this->_setError($this->_statementId);
 			return false;
 		}
  
 		$this->_setError(null, true);
  
-		switch(ocistatementtype($this->_statementId)) {
+		switch(oci_statement_type($this->_statementId)) {
 			case 'DESCRIBE':
 			case 'SELECT':
 				$this->_scrapeSQL($sql);
@@ -386,11 +390,11 @@ class Oracle extends DboSource {
 		}
  
 		if ($this->_limit >= 1) {
-			ocisetprefetch($this->_statementId, $this->_limit);
+			oci_set_prefetch($this->_statementId, $this->_limit);
 		} else {
-			ocisetprefetch($this->_statementId, 3000);
+			oci_set_prefetch($this->_statementId, 3000);
 		}
-		$this->_numRows = ocifetchstatement($this->_statementId, $this->_results, $this->_offset, $this->_limit, OCI_NUM | OCI_FETCHSTATEMENT_BY_ROW);
+		$this->_numRows = oci_fetch_all($this->_statementId, $this->_results, $this->_offset, $this->_limit, OCI_NUM | OCI_FETCHSTATEMENT_BY_ROW);
 		$this->_currentRow = 0;
 		$this->limit();
 		return $this->_statementId;
@@ -404,7 +408,7 @@ class Oracle extends DboSource {
  */
 	function fetchRow() {
 		if ($this->_currentRow >= $this->_numRows) {
-			ocifreestatement($this->_statementId);
+			oci_free_statement($this->_statementId);
 			$this->_map = null;
 			$this->_results = null;
 			$this->_currentRow = null;
@@ -429,7 +433,7 @@ class Oracle extends DboSource {
 /**
  * Fetches the next row from the current result set
  *
- * @return unknown
+ * @return array
  */
 	function fetchResult() {
 		return $this->fetchRow();
@@ -466,7 +470,7 @@ class Oracle extends DboSource {
  * Create trigger
  *
  * @param string $table
- * @return mixed
+ * @return string
  * @access public
  */
 	function createTrigger($table) {
@@ -503,12 +507,14 @@ class Oracle extends DboSource {
 /**
  * Returns an array of the fields in given table name.
  *
- * @param object instance of a model to inspect
+ * @param object $model instance of a model to inspect
  * @return array Fields in table. Keys are name and type
  * @access public
  */
 	public function describe(&$model) {
 		$table = $this->fullTableName($model, false);
+		$tableOnly = $this->fullTableName($model, false, false);
+		$tableSchema = $this->tableSchema($model);
  
 		if (!empty($model->sequence)) {
 			$this->_sequenceMap[$table] = $model->sequence;
@@ -523,7 +529,7 @@ class Oracle extends DboSource {
 		}
  
 		$sql = 'SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, NULLABLE FROM all_tab_columns WHERE table_name = \'';
-		$sql .= strtoupper($this->fullTableName($model)) . '\'';
+		$sql .= strtoupper($tableOnly) . '\''.($tableSchema ? ' AND owner = \''.strtoupper($tableSchema).'\'' : '');
  
 		if (!$this->execute($sql)) {
 			return false;
@@ -541,7 +547,7 @@ class Oracle extends DboSource {
 
 		// Find any single-column unique index and mark it as a primary key
 		$sql = 'SELECT MAX(COLUMN_NAME) COLUMN_NAME, INDEX_NAME, COUNT(*) FROM ALL_IND_COLUMNS JOIN ALL_INDEXES USING (INDEX_NAME) WHERE ALL_INDEXES.UNIQUENESS = \'UNIQUE\' AND ALL_INDEXES.TABLE_NAME =\'';
-		$sql .= strtoupper($this->fullTableName($model)) . '\' GROUP BY INDEX_NAME HAVING COUNT(*) = 1';
+		$sql .= strtoupper($tableOnly) . '\''.($tableSchema? ' AND OWNER = \''.strtoupper($tableSchema).'\'' : '').' GROUP BY INDEX_NAME HAVING COUNT(*) = 1';
 		if ($this->execute($sql)) {
 			for ($i = 0; $row = $this->fetchRow(); $i++) {
 				$fields[strtolower($row[0]['COLUMN_NAME'])]['key'] = 'primary';
@@ -722,8 +728,9 @@ class Oracle extends DboSource {
 /**
  * Generate a Oracle Alter Table syntax for the given Schema comparison
  *
- * @param unknown_type $schema
- * @return unknown
+ * @param array() $compare Schemas to compare for differences
+ * @param string $table optional table name
+ * @return mixed string or false
  */
 	function alterSchema($compare, $table = null) {
 		if (!is_array($compare)) {
@@ -772,8 +779,8 @@ class Oracle extends DboSource {
  * This method should quote Oracle identifiers. Well it doesn't.
  * It would break all scaffolding and all of Cake's default assumptions.
  *
- * @param unknown_type $var
- * @return unknown
+ * @param string $name
+ * @return string
  * @access public
  */
 	function name($name) {
@@ -793,7 +800,6 @@ class Oracle extends DboSource {
 /**
  * Begin a transaction
  *
- * @param unknown_type $model
  * @return boolean True on success, false on fail
  * (i.e. if the database/model does not support transactions).
  */
@@ -805,26 +811,24 @@ class Oracle extends DboSource {
 /**
  * Rollback a transaction
  *
- * @param unknown_type $model
  * @return boolean True on success, false on fail
  * (i.e. if the database/model does not support transactions,
  * or a transaction has not started).
  */
 	function rollback() {
-		return ocirollback($this->connection);
+		return oci_rollback($this->connection);
 	}
  
 /**
  * Commit a transaction
  *
- * @param unknown_type $model
  * @return boolean True on success, false on fail
  * (i.e. if the database/model does not support transactions,
  * or a transaction has not started).
  */
 	function commit() {
 		$this->__transactionStarted = false;
-		return ocicommit($this->connection);
+		return oci_commit($this->connection);
 	}
  
 /**
@@ -882,11 +886,14 @@ class Oracle extends DboSource {
  * Returns a quoted and escaped string of $data for use in an SQL statement.
  *
  * @param string $data String to be prepared for use in an SQL statement
+ * @param string $column optional column data type
  * @return string Quoted and escaped
  * @access public
  */
-	function value($data, $column = null, $safe = false) {
-		$parent = parent::value($data, $column, $safe);
+	function value($data, $column = null) {
+		// TODO: some initial logic from DboSource::value() may be of interest, but the terminal case statement requires PDO
+		//$parent = parent::value($data, $column);
+		$parent = null;
  
 		if ($parent != null) {
 			return $parent;
@@ -957,7 +964,7 @@ class Oracle extends DboSource {
  * @access public
  */
 	function lastAffected() {
-		return $this->_statementId ? ocirowcount($this->_statementId): false;
+		return $this->_statementId ? oci_num_rows($this->_statementId): false;
 	}
  
 /**
@@ -1194,6 +1201,33 @@ class Oracle extends DboSource {
  * @return boolean
  */
 	function hasResult() {
-		return true;
+		return ($this->lastAffected() > 0);
+	}
+	
+/**
+ * Gets table schema
+ *
+ * @param Model|string $model Either a Model object or a string table name.
+ * @return string schema name
+ */
+	public function tableSchema($model) {
+		if (is_object($model)) {
+			$schemaName = $model->schemaName;
+		} elseif (strstr(strval($model), '.') !== FALSE) {
+			$schemaName = array_shift(explode('.', strval($model)));
+		} else {
+			$schemaName = $this->getSchemaName();
+		}
+		return $schemaName;
+	}
+
+/**
+ * Finish an open cursor
+ *
+ */
+	public function finish() {
+		if ($this->_statementId) {
+			oci_cancel($this->_statementId);
+		}
 	}
 }
