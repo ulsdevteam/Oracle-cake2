@@ -53,6 +53,11 @@ class Oracle extends DboSource {
 	var $_sequences = array();
  
 /**
+ * Default schema, if specified
+ */
+	var $_defaultSchema = '';
+ 
+/**
  * Transaction in progress flag
  *
  * @var boolean
@@ -190,6 +195,10 @@ class Oracle extends DboSource {
  
 			if (!empty($config['nls_comp'])) {
 				$this->execute('ALTER SESSION SET NLS_COMP='.$config['nls_comp']);
+			}
+			if (!empty($config['schema'])) {
+				$this->execute('ALTER SESSION SET CURRENT_SCHEMA='.$config['schema']);
+				$this->_defaultSchema = strtoupper($config['schema']);
 			}
 			$this->execute("ALTER SESSION SET NLS_DATE_FORMAT='YYYY-MM-DD HH24:MI:SS'");
 		} else {
@@ -374,6 +383,7 @@ class Oracle extends DboSource {
  
 		if (!oci_execute($this->_statementId, $mode)) {
 			$this->_setError($this->_statementId);
+			error_log($sql);
 			return false;
 		}
  
@@ -490,7 +500,7 @@ class Oracle extends DboSource {
 		if ($cache != null) {
 			return $cache;
 		}
-		$sql = 'SELECT view_name AS name FROM all_views UNION SELECT table_name AS name FROM all_tables';
+		$sql = 'SELECT view_name AS name FROM all_views'.($this->_defaultSchema ? ' WHERE owner = \''.$this->_defaultSchema.'\'' : '').' UNION SELECT table_name AS name FROM all_tables'.($this->_defaultSchema ? ' WHERE owner = \''.$this->_defaultSchema.'\'' : '');
  
 		if (!$this->execute($sql)) {
 			return false;
@@ -891,12 +901,23 @@ class Oracle extends DboSource {
  * @access public
  */
 	function value($data, $column = null) {
-		// TODO: some initial logic from DboSource::value() may be of interest, but the terminal case statement requires PDO
-		//$parent = parent::value($data, $column);
-		$parent = null;
- 
-		if ($parent != null) {
-			return $parent;
+		if (is_array($data) && !empty($data)) {
+			return array_map(
+				array(&$this, 'value'),
+				$data, array_fill(0, count($data), $column)
+			);
+		} elseif (is_object($data) && isset($data->type, $data->value)) {
+			if ($data->type === 'identifier') {
+				return $this->name($data->value);
+			} elseif ($data->type === 'expression') {
+				return $data->value;
+			}
+		} elseif (in_array($data, array('{$__cakeID__$}', '{$__cakeForeignKey__$}'), true)) {
+			return $data;
+		}
+
+		if (empty($column)) {
+			$column = $this->introspectType($data);
 		}
  
 		if ($data === null) {
@@ -1014,164 +1035,6 @@ class Oracle extends DboSource {
 	}
  
 /**
- * Enter description here...
- *
- * @param Model $model
- * @param unknown_type $linkModel
- * @param string $type Association type
- * @param unknown_type $association
- * @param unknown_type $assocData
- * @param unknown_type $queryData
- * @param unknown_type $external
- * @param unknown_type $resultSet
- * @param integer $recursive Number of levels of association
- * @param array $stack
- */
-	function queryAssociation(&$model, &$linkModel, $type, $association, $assocData, &$queryData, $external = false, &$resultSet, $recursive, $stack) {
-		if ($query = $this->generateAssociationQuery($model, $linkModel, $type, $association, $assocData, $queryData, $external, $resultSet)) {
-			if (!isset($resultSet) || !is_array($resultSet)) {
-				if (Configure::read() > 0) {
-					echo '<div style = "font: Verdana bold 12px; color: #FF0000">' . sprintf(__('SQL Error in model %s:', true), $model->alias) . ' ';
-					if (isset($this->error) && $this->error != null) {
-						echo $this->error;
-					}
-					echo '</div>';
-				}
-				return null;
-			}
-			$count = count($resultSet);
- 
-			if ($type === 'hasMany' && (!isset($assocData['limit']) || empty($assocData['limit']))) {
-				$ins = $fetch = array();
-				for ($i = 0; $i < $count; $i++) {
-					if ($in = $this->insertQueryData('{$__cakeID__$}', $resultSet[$i], $association, $assocData, $model, $linkModel, $stack)) {
-						$ins[] = $in;
-					}
-				}
- 
-				if (!empty($ins)) {
-					$fetch = array();
-					$ins = array_chunk($ins, 1000);
-					foreach ($ins as $i) {
-						$q = str_replace('{$__cakeID__$}', implode(', ', $i), $query);
-						$q = str_replace('= (', 'IN (', $q);
-						$res = $this->fetchAll($q, $model->cacheQueries, $model->alias);
-						$fetch = array_merge($fetch, $res);
-					}
-				}
- 
-				if (!empty($fetch) && is_array($fetch)) {
-					if ($recursive > 0) {
- 
-						foreach ($linkModel->__associations as $type1) {
-							foreach ($linkModel->{$type1} as $assoc1 => $assocData1) {
-								$deepModel =& $linkModel->{$assoc1};
-								$tmpStack = $stack;
-								$tmpStack[] = $assoc1;
- 
-								if ($linkModel->useDbConfig === $deepModel->useDbConfig) {
-									$db =& $this;
-								} else {
-									$db =& ConnectionManager::getDataSource($deepModel->useDbConfig);
-								}
-								$db->queryAssociation($linkModel, $deepModel, $type1, $assoc1, $assocData1, $queryData, true, $fetch, $recursive - 1, $tmpStack);
-							}
-						}
-					}
-				}
-				return $this->__mergeHasMany($resultSet, $fetch, $association, $model, $linkModel, $recursive);
-			} elseif ($type === 'hasAndBelongsToMany') {
-				$ins = $fetch = array();
-				for ($i = 0; $i < $count; $i++) {
-					if ($in = $this->insertQueryData('{$__cakeID__$}', $resultSet[$i], $association, $assocData, $model, $linkModel, $stack)) {
-						$ins[] = $in;
-					}
-				}
- 
-				$foreignKey = $model->hasAndBelongsToMany[$association]['foreignKey'];
-				$joinKeys = array($foreignKey, $model->hasAndBelongsToMany[$association]['associationForeignKey']);
-				list($with, $habtmFields) = $model->joinModel($model->hasAndBelongsToMany[$association]['with'], $joinKeys);
-				$habtmFieldsCount = count($habtmFields);
- 
-				if (!empty($ins)) {
-					$fetch = array();
-					$ins = array_chunk($ins, 1000);
-					foreach ($ins as $i) {
-						$q = str_replace('{$__cakeID__$}', '(' .implode(', ', $i) .')', $query);
-						$q = str_replace('= (', 'IN (', $q);
-						$q = str_replace('  WHERE 1 = 1', '', $q);
- 
-						$q = $this->insertQueryData($q, null, $association, $assocData, $model, $linkModel, $stack);
-						if ($q != false) {
-							$res = $this->fetchAll($q, $model->cacheQueries, $model->alias);
-							$fetch = array_merge($fetch, $res);
-						}
-					}
-				}
-			}
- 
-			for ($i = 0; $i < $count; $i++) {
-				$row =& $resultSet[$i];
- 
-				if ($type !== 'hasAndBelongsToMany') {
-					$q = $this->insertQueryData($query, $resultSet[$i], $association, $assocData, $model, $linkModel, $stack);
-					if ($q != false) {
-						$fetch = $this->fetchAll($q, $model->cacheQueries, $model->alias);
-					} else {
-						$fetch = null;
-					}
-				}
- 
-				if (!empty($fetch) && is_array($fetch)) {
-					if ($recursive > 0) {
- 
-						foreach ($linkModel->__associations as $type1) {
-							foreach ($linkModel->{$type1} as $assoc1 => $assocData1) {
- 
-								$deepModel =& $linkModel->{$assoc1};
-								if (($type1 === 'belongsTo') || ($deepModel->alias === $model->alias && $type === 'belongsTo') || ($deepModel->alias != $model->alias)) {
-									$tmpStack = $stack;
-									$tmpStack[] = $assoc1;
-									if ($linkModel->useDbConfig == $deepModel->useDbConfig) {
-										$db =& $this;
-									} else {
-										$db =& ConnectionManager::getDataSource($deepModel->useDbConfig);
-									}
-									$db->queryAssociation($linkModel, $deepModel, $type1, $assoc1, $assocData1, $queryData, true, $fetch, $recursive - 1, $tmpStack);
-								}
-							}
-						}
-					}
-					if ($type == 'hasAndBelongsToMany') {
-						$merge = array();
-						foreach($fetch as $j => $data) {
-							if (isset($data[$with]) && $data[$with][$foreignKey] === $row[$model->alias][$model->primaryKey]) {
-								if ($habtmFieldsCount > 2) {
-									$merge[] = $data;
-								} else {
-									$merge[] = Set::diff($data, array($with => $data[$with]));
-								}
-							}
-						}
-						if (empty($merge) && !isset($row[$association])) {
-							$row[$association] = $merge;
-						} else {
-							$this->__mergeAssociation($resultSet[$i], $merge, $association, $type);
-						}
-					} else {
-						$this->__mergeAssociation($resultSet[$i], $fetch, $association, $type);
-					}
-					$resultSet[$i][$association] = $linkModel->afterfind($resultSet[$i][$association]);
- 
-				} else {
-					$tempArray[0][$association] = false;
-					$this->__mergeAssociation($resultSet[$i], $tempArray, $association, $type);
-				}
-			}
-		}
-	}
- 
-/**
  * Generate a "drop table" statement for the given Schema object
  *
  * @param object $schema An instance of a subclass of CakeSchema
@@ -1229,5 +1092,14 @@ class Oracle extends DboSource {
 		if ($this->_statementId) {
 			oci_cancel($this->_statementId);
 		}
+	}
+	
+/**
+ * Get the default schema, if applicable
+ * @return string
+ *
+ */
+	public function getSchemaName() {
+		return $this->_defaultSchema;
 	}
 }
