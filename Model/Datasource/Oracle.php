@@ -22,7 +22,8 @@ App::uses('DboSource', 'Model/Datasource');
 /**
  * Oracle layer for DBO.
  *
- * Long description for class
+ * This package overrides all PDO methods, using the oci module instead.
+ * The Oracle PDO package is experimental and unlikely to be supported by CakePHP in the near future.
  *
  * @package       cake
  * @subpackage    cake.cake.libs.model.datasources.dbo
@@ -254,6 +255,23 @@ class Oracle extends DboSource {
 			$this->connected = !ocilogoff($this->connection);
 			return !$this->connected;
 		}
+	}
+
+/**
+ * Gets the version string of the database server
+ *
+ * @return string The database version
+ */
+	public function getVersion() {
+		$sql = 'SELECT BANNER FROM SYS.V_$VERSION';
+		if (!$this->execute($sql)) {
+			return false;
+		}
+ 
+		if (!$row = $this->fetchRow()) {
+			return false;
+		}
+		return $row[0]['BANNER'];
 	}
  
 /**
@@ -504,7 +522,7 @@ class Oracle extends DboSource {
 			return $cache;
 		}
  
-		$sql = 'SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH FROM all_tab_columns WHERE table_name = \'';
+		$sql = 'SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, NULLABLE FROM all_tab_columns WHERE table_name = \'';
 		$sql .= strtoupper($this->fullTableName($model)) . '\'';
  
 		if (!$this->execute($sql)) {
@@ -516,9 +534,20 @@ class Oracle extends DboSource {
 		for ($i = 0; $row = $this->fetchRow(); $i++) {
 			$fields[strtolower($row[0]['COLUMN_NAME'])] = array(
 				'type'=> $this->column($row[0]['DATA_TYPE']),
-				'length'=> $row[0]['DATA_LENGTH']
+				'length'=> $row[0]['DATA_LENGTH'],
+				'null'=> $row[0]['NULLABLE'] == 'N' ? FALSE : TRUE
 			);
 		}
+
+		// Find any single-column unique index and mark it as a primary key
+		$sql = 'SELECT MAX(COLUMN_NAME) COLUMN_NAME, INDEX_NAME, COUNT(*) FROM ALL_IND_COLUMNS JOIN ALL_INDEXES USING (INDEX_NAME) WHERE ALL_INDEXES.UNIQUENESS = \'UNIQUE\' AND ALL_INDEXES.TABLE_NAME =\'';
+		$sql .= strtoupper($this->fullTableName($model)) . '\' GROUP BY INDEX_NAME HAVING COUNT(*) = 1';
+		if ($this->execute($sql)) {
+			for ($i = 0; $row = $this->fetchRow(); $i++) {
+				$fields[strtolower($row[0]['COLUMN_NAME'])]['key'] = 'primary';
+			}
+		}
+
 		#$this->__cacheDescription($this->fullTableName($model, false), $fields);
 
 		return $fields;
@@ -1157,4 +1186,14 @@ class Oracle extends DboSource {
 			}
 			return $out;
 		}
+
+/**
+ * Override DboSource::hasResult, because it references PDO and we're not PDO
+ * @see http://www.hassanbakar.com/2012/01/09/using-oracle-in-cakephp-2-0/
+ * 
+ * @return boolean
+ */
+	function hasResult() {
+		return true;
+	}
 }
