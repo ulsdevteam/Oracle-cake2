@@ -362,6 +362,10 @@ class Oracle extends DboSource {
  * @access protected
  */
 	function _execute($sql) {
+		if (!$this->connection) {
+			$this->_statementId = false;
+			return false;
+		}
 		$this->_statementId = oci_parse($this->connection, $sql);
 		if (!$this->_statementId) {
 			$this->_setError($this->connection);
@@ -538,7 +542,7 @@ class Oracle extends DboSource {
 			}
 		}
 
-
+ 
 		$cache = parent::describe($model);
  
 		if ($cache != null) {
