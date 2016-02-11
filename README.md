@@ -9,5 +9,39 @@ Original source presumed to be a CakePHP 1.x datasource.  This was modified by o
 ## License
 [MIT License](http://www.opensource.org/licenses/mit-license.php)
 
-## Using
-To install, clone or place a copy of this repository in your app/Plugins directory, e.g. app/Plugins/OracleDS.  Load the plugin in your app/Config/bootstrap.php, e.g. `CakePlugin::load('OracleDS');`.  Reference the datasource from your app/Config/database.php, e.g. `'datasource' => 'OracleDS.Oracle',`.
+## Using as plugin
+* Clone or place a copy of this repository in your `app/Plugins` directory, e.g. `app/Plugins/OracleDS`.
+* Load the plugin in your `app/Config/bootstrap.php`, e.g. `CakePlugin::load('OracleDS');`.
+* Set database config file `app\Config\database.php` as :
+```
+<?php
+class DATABASE_CONFIG {
+	public $default = array(
+		'datasource' => 'OracleDS.Oracle',
+		'persistent' => false,
+		'login' => 'username',
+		'password' => 'pass',
+		'database' => 'hostname/databasename',
+		'prefix' => '',
+		'encoding' => 'utf8',
+	);
+}
+```
+
+## Using as Datasource
+* Clone/Copy the Oracle.php file in this `\Model\Datasource\` directory into your `app\Model\Datasource\`
+* Set database config file `app\Config\database.php` as :
+```
+<?php
+class DATABASE_CONFIG {
+	public $default = array(
+		'datasource' => 'Datasource/Oracle',
+		'persistent' => false,
+		'login' => 'username',
+		'password' => 'pass',
+		'database' => 'hostname/databasename',
+		'prefix' => '',
+		'encoding' => 'utf8',
+	);
+}
+```
