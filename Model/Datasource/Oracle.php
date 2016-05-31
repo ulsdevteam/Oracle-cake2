@@ -289,7 +289,7 @@ class Oracle extends DboSource {
  * @param bool $quote If false, returns fields array unquoted
  * @return array
  */
-	public function fields (Model $model, $alias = null, $fields = array(), $quote = true) {
+	public function fields(Model $model, $alias = null, $fields = array(), $quote = true) {
 		$_fields = array();
 
 		if (empty($alias)) $alias = $model->alias;
@@ -381,6 +381,7 @@ class Oracle extends DboSource {
  * Returns number of rows in previous resultset. If no previous resultset exists,
  * this returns false.
  *
+ * @param mixed $source optional Not used
  * @return integer Number of rows in resultset
  * @access public
  */
@@ -389,9 +390,11 @@ class Oracle extends DboSource {
 	}
  
 /**
- * Executes given SQL statement. This is an overloaded method.
+ * Executes given SQL statement. This is an overridden method.
  *
  * @param string $sql SQL statement
+ * @param array $params List of params to be bound to query
+ * @param array $prepareOptions Options to be used in the prepare statement
  * @return resource Result resource identifier or null
  * @access protected
  */
@@ -443,7 +446,8 @@ class Oracle extends DboSource {
 /**
  * Fetch result row
  *
- * @return array
+ * @param string $sql optional. Some SQL to be executed
+ * @return the fetched row as an array
  * @access public
  */
 	public function fetchRow($sql = null) {
@@ -473,7 +477,7 @@ class Oracle extends DboSource {
 /**
  * Fetches the next row from the current result set
  *
- * @return array
+ * @return next row as an array
  */
 	public function fetchResult() {
 		return $this->fetchRow();
@@ -527,6 +531,7 @@ class Oracle extends DboSource {
  * Returns an array of tables in the database. If there are no tables, an error is
  * raised and the application exits.
  *
+ * @param mixed $data Unused in this class
  * @return array tablenames in the database
  * @access public
  */
@@ -552,7 +557,7 @@ class Oracle extends DboSource {
 /**
  * Returns an array of the fields in given table name.
  *
- * @param object $model instance of a model to inspect
+ * @param Model|string $model instance of a model to inspect
  * @return array Fields in table. Keys are name and type
  * @access public
  */
@@ -754,6 +759,7 @@ class Oracle extends DboSource {
  *
  * @param string $model Name of model to inspect
  * @return array Fields in table. Keys are column and unique
+ * @access public
  */
 	function index($model) {
 		$index = array();
@@ -797,6 +803,7 @@ class Oracle extends DboSource {
  * @param array() $compare Schemas to compare for differences
  * @param string $table optional table name
  * @return mixed string or false
+ * @access public
  */
 	function alterSchema($compare, $table = null) {
 		if (!is_array($compare)) {
@@ -868,6 +875,7 @@ class Oracle extends DboSource {
  *
  * @return boolean True on success, false on fail
  * (i.e. if the database/model does not support transactions).
+ * @access public
  */
 	function begin() {
 		$this->__transactionStarted = true;
@@ -880,6 +888,7 @@ class Oracle extends DboSource {
  * @return boolean True on success, false on fail
  * (i.e. if the database/model does not support transactions,
  * or a transaction has not started).
+ * @access public
  */
 	function rollback() {
 		return oci_rollback($this->connection);
@@ -891,6 +900,7 @@ class Oracle extends DboSource {
  * @return boolean True on success, false on fail
  * (i.e. if the database/model does not support transactions,
  * or a transaction has not started).
+ * @access public
  */
 	function commit() {
 		$this->__transactionStarted = false;
@@ -953,6 +963,7 @@ class Oracle extends DboSource {
  *
  * @param string $data String to be prepared for use in an SQL statement
  * @param string $column optional column data type
+ * @param boolean $null optional column allows NULL values
  * @return string Quoted and escaped
  * @access public
  */
@@ -1030,6 +1041,7 @@ class Oracle extends DboSource {
 /**
  * Returns a formatted error message from previous database operation.
  *
+ * @param PDOStatement $query to extract the error from if any
  * @return string Error message with error number
  * @access public
  */
@@ -1040,6 +1052,7 @@ class Oracle extends DboSource {
 /**
  * Returns number of affected rows in previous database operation. If no previous operation exists, this returns false.
  *
+ * @param mixed $source to check
  * @return int Number of affected rows
  * @access public
  */
@@ -1050,9 +1063,11 @@ class Oracle extends DboSource {
 /**
  * Renders a final SQL statement by putting together the component parts in the correct order
  *
- * @param string $type
- * @param array $data
+ * @param string $type of query being run
+ *				 e.g. select, create, update, delete, schema, alter
+ * @param array $data to insert into the query
  * @return string
+ * @access public 
  */
 	function renderStatement($type, $data) {
 		extract($data);
@@ -1091,10 +1106,11 @@ class Oracle extends DboSource {
 /**
  * Generate a "drop table" statement for the given Schema object
  *
- * @param object $schema An instance of a subclass of CakeSchema
+ * @param CakeSchema $schema An instance of a subclass of CakeSchema
  * @param string $table Optional.  If specified only the table name given will be generated.
  *						Otherwise, all tables defined in the schema are generated.
  * @return string
+ * @access public
  */
 		function dropSchema(CakeSchema $schema, $table = null) {
 			if (!is_a($schema, 'CakeSchema')) {
@@ -1114,8 +1130,10 @@ class Oracle extends DboSource {
 /**
  * Override DboSource::hasResult, because it references PDO and we're not PDO
  * @see http://www.hassanbakar.com/2012/01/09/using-oracle-in-cakephp-2-0/
+ * Checks if the result is valid
  * 
- * @return boolean
+ * @return boolean True if the result is valid else false
+ * @access public 
  */
 	function hasResult() {
 		return ($this->lastAffected() > 0);
@@ -1150,8 +1168,9 @@ class Oracle extends DboSource {
 	
 /**
  * Get the default schema, if applicable
- * @return string
- *
+ * 
+ * @return string|null The Schema name
+ * @access public
  */
 	public function getSchemaName() {
 		return $this->_defaultSchema;
