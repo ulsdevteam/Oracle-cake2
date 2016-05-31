@@ -148,11 +148,10 @@ class Oracle extends DboSource {
  */
 	var $_baseConfig = array(
 		'persistent' => true,
-		'host' => 'localhost',
 		'login' => 'system',
 		'password' => '',
-		'database' => 'cake',
-		'nls_sort' => '',
+		'database' => 'localhost/cake',
+		'encoding' => 'utf8',
 		'nls_sort' => ''
 	);
  
@@ -172,12 +171,12 @@ class Oracle extends DboSource {
 	function connect() {
 		$config = $this->config;
 		$this->connected = false;
-		$config['charset'] = !empty($config['charset']) ? $config['charset'] : null;
+		$config['encoding'] = !empty($config['encoding']) ? $config['encoding'] : 'utf8';
  
 		if (!$config['persistent']) {
-			$this->connection = oci_connect($config['login'], $config['password'], $config['database'], $config['charset']);
+			$this->connection = oci_connect($config['login'], $config['password'], $config['database'], $config['encoding']);
 		} else {
-			$this->connection = oci_pconnect($config['login'], $config['password'], $config['database'], $config['charset']);
+			$this->connection = oci_pconnect($config['login'], $config['password'], $config['database'], $config['encoding']);
 		}
  
 		if ($this->connection) {
@@ -280,6 +279,39 @@ class Oracle extends DboSource {
 		$this->finish();
 		return $row[0]['BANNER'];
 	}
+
+/**
+ * Generates the fields list of an SQL query.
+ *
+ * @param Model $Model The model to get fields for.
+ * @param string $alias Alias table name
+ * @param mixed $fields The provided list of fields.
+ * @param bool $quote If false, returns fields array unquoted
+ * @return array
+ */
+	public function fields (Model $model, $alias = null, $fields = array(), $quote = true) {
+		$_fields = array();
+
+		if (empty($alias)) $alias = $model->alias;
+		if (is_array($fields)) {
+			$fields = array_map('trim', $fields);
+			foreach ($fields as $field) {
+				if ($field != '*') {
+					if (substr($field, -2) == '.*') {
+						$AssociatedModel = $model;
+						$AssociatedAlias = substr($field, 0, -2);
+						if ($AssociatedAlias != $alias) $AssociatedModel = $model->$AssociatedAlias;
+						foreach (parent::fields($AssociatedModel, null, array(), $quote) as $field) $_fields[] = $field;
+						$field = null;
+					}
+					if (!empty($field)) $_fields[] = $field;
+				}
+			}
+		}
+		$fields = parent::fields($model, $alias, $_fields, $quote);
+
+		return $fields;
+	}
  
 /**
  * Scrape the incoming SQL to create the association map. This is an extremely
@@ -323,6 +355,8 @@ class Oracle extends DboSource {
 			if (count($e) > 1) {
 				$table = $e[0];
 				$field = strtolower($e[1]);
+			} elseif (strpos($e[0], $this->virtualFieldSeparator)) {
+				list($table, $field) = explode($this->virtualFieldSeparator, $e[0]);
 			} else {
 				$table = 0;
 				$field = $e[0];
@@ -350,7 +384,7 @@ class Oracle extends DboSource {
  * @return integer Number of rows in resultset
  * @access public
  */
-	function lastNumRows() {
+	function lastNumRows($source = null) {
 		return $this->_numRows;
 	}
  
@@ -361,7 +395,7 @@ class Oracle extends DboSource {
  * @return resource Result resource identifier or null
  * @access protected
  */
-	function _execute($sql) {
+	function _execute($sql, $params = array(), $prepareOptions = array()) {
 		if (!$this->connection) {
 			$this->_statementId = false;
 			return false;
@@ -412,7 +446,7 @@ class Oracle extends DboSource {
  * @return array
  * @access public
  */
-	function fetchRow() {
+	public function fetchRow($sql = null) {
 		if ($this->_currentRow >= $this->_numRows) {
 			oci_free_statement($this->_statementId);
 			$this->_map = null;
@@ -441,7 +475,7 @@ class Oracle extends DboSource {
  *
  * @return array
  */
-	function fetchResult() {
+	public function fetchResult() {
 		return $this->fetchRow();
 	}
  
@@ -496,7 +530,7 @@ class Oracle extends DboSource {
  * @return array tablenames in the database
  * @access public
  */
-	function listSources() {
+	function listSources($data = null) {
 		$cache = parent::listSources();
 		if ($cache != null) {
 			return $cache;
@@ -522,7 +556,7 @@ class Oracle extends DboSource {
  * @return array Fields in table. Keys are name and type
  * @access public
  */
-	public function describe(&$model) {
+	public function describe($model) {
 		$table = $this->fullTableName($model, false);
 		$tableOnly = $this->fullTableName($model, false, false);
 		$tableSchema = $this->tableSchema($model);
@@ -922,7 +956,7 @@ class Oracle extends DboSource {
  * @return string Quoted and escaped
  * @access public
  */
-	function value($data, $column = null) {
+	function value($data, $column = null, $null = true) {
 		if (is_array($data) && !empty($data)) {
 			return array_map(
 				array(&$this, 'value'),
@@ -977,7 +1011,7 @@ class Oracle extends DboSource {
  * @return integer
  * @access public
  */
-	function lastInsertId($source, $key = '') {
+	function lastInsertId($source = null, $key = '') {
 		$sequence = $this->_sequenceMap[$source];
 		if ($sequence) {
 			$sql = "SELECT $sequence.currval FROM dual";
@@ -999,7 +1033,7 @@ class Oracle extends DboSource {
  * @return string Error message with error number
  * @access public
  */
-	function lastError() {
+	function lastError(PDOStatement $query = null) {
 		return $this->_error;
 	}
  
@@ -1009,7 +1043,7 @@ class Oracle extends DboSource {
  * @return int Number of affected rows
  * @access public
  */
-	function lastAffected() {
+	function lastAffected($source = null) {
 		return $this->_statementId ? oci_num_rows($this->_statementId): false;
 	}
  
@@ -1062,7 +1096,7 @@ class Oracle extends DboSource {
  *						Otherwise, all tables defined in the schema are generated.
  * @return string
  */
-		function dropSchema($schema, $table = null) {
+		function dropSchema(CakeSchema $schema, $table = null) {
 			if (!is_a($schema, 'CakeSchema')) {
 				trigger_error(__('Invalid schema object', true), E_USER_WARNING);
 				return null;
