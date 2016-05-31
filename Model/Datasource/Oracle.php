@@ -447,7 +447,7 @@ class Oracle extends DboSource {
  * Fetch result row
  *
  * @param string $sql optional. Some SQL to be executed
- * @return the fetched row as an array
+ * @return array the fetched row 
  * @access public
  */
 	public function fetchRow($sql = null) {
@@ -477,7 +477,7 @@ class Oracle extends DboSource {
 /**
  * Fetches the next row from the current result set
  *
- * @return next row as an array
+ * @return array the next row
  */
 	public function fetchResult() {
 		return $this->fetchRow();
@@ -557,7 +557,7 @@ class Oracle extends DboSource {
 /**
  * Returns an array of the fields in given table name.
  *
- * @param Model|string $model instance of a model to inspect
+ * @param object $model instance of a model to inspect
  * @return array Fields in table. Keys are name and type
  * @access public
  */
@@ -637,7 +637,7 @@ class Oracle extends DboSource {
  * @param mixed $table A string or model class representing the table to be truncated
  * @param integer $reset If -1, sequences are dropped, if 0 (default), sequences are reset,
  *						and if 1, sequences are not modified
- * @return boolean	SQL TRUNCATE TABLE statement, false if not applicable.
+ * @return boolean SQL TRUNCATE TABLE statement, false if not applicable.
  * @access public
  *
  */
